@@ -3,113 +3,195 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-import streamlit.components.v1 as components
 
-# --- 1. SUPER CSS HIDER (Membasmi Kotak Merah & Error Visual) ---
-st.markdown("""
-    <style>
-    .main .block-container {
-        padding-top: 1rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# Auto-recovery script
-components.html(
-    """
-    <script>
-    window.addEventListener('unhandledrejection', (event) => {
-        if (event.reason?.message?.includes('Failed to fetch')) { window.location.reload(); }
-    });
-    </script>
-    """, height=0,
+# =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(
+    page_title="Dashboard Analisis Tumor",
+    layout="wide"
 )
 
-# --- 2. SIDEBAR PARAMETER ---
+# =========================
+# STYLE SEDERHANA (AMAN)
+# =========================
+st.markdown("""
+<style>
+.main .block-container {
+    padding-top: 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# SIDEBAR PARAMETER
+# =========================
 st.sidebar.header("⚙️ Kontrol Parameter")
-metode = st.sidebar.selectbox("Metode Segmentasi:", ["Manual", "Otsu"])
 
-t_val = 160
+metode = st.sidebar.selectbox(
+    "Metode Thresholding",
+    ["Manual", "Otsu"]
+)
+
 if metode == "Manual":
-    t_val = st.sidebar.number_input("Threshold (T Segment):", 0, 255, 160, step=5)
+    thresh_val = st.sidebar.slider(
+        "Nilai Threshold (T)",
+        0, 255, 160
+    )
+else:
+    thresh_val = None
 
-operasi_morf = st.sidebar.selectbox("Operasi Morfologi:", ["None", "Opening", "Closing", "Erosi", "Dilasi"])
-kernel_size = st.sidebar.number_input("Size Filter (Kernel):", 1, 15, 3, step=2)
+operasi_morf = st.sidebar.selectbox(
+    "Operasi Morfologi",
+    ["None", "Opening", "Closing", "Erosi", "Dilasi"]
+)
 
-# --- 3. TAMPILAN UTAMA ---
-st.title("🧠 Dashboard Analisis Tumor")
+kernel_size = st.sidebar.slider(
+    "Ukuran Kernel",
+    1, 15, 3, step=2
+)
 
-tab1, tab2 = st.tabs(["🚀 Analisis Citra", "ℹ️ Informasi Metode Lengkap"])
+show_hist = st.sidebar.checkbox("Tampilkan Histogram", value=True)
 
-with tab1:
-    uploaded_file = st.file_uploader("Upload Foto Medis", type=['jpg', 'png', 'jpeg'])
+# =========================
+# HALAMAN UTAMA
+# =========================
+st.title("🧠 Dashboard Analisis Tumor Berbasis Segmentasi")
+st.caption("Citra Medis: MRI / CT Scan / Mammografi (Simulasi Akademik)")
 
-    if uploaded_file is not None:
-        img = np.array(Image.open(uploaded_file).convert('L'))
-        
-        # Isolasi Area Dasar
-        mask_init = cv2.inRange(img, 100, 255) 
-        img_target_tumor = cv2.bitwise_and(img, img, mask=mask_init)
+uploaded_file = st.file_uploader(
+    "Upload Citra Medis (JPG / PNG)",
+    type=["jpg", "jpeg", "png"]
+)
 
-        # Logika Segmentasi
-        if metode == 'Manual':
-            _, binary_res = cv2.threshold(img_target_tumor, t_val, 255, cv2.THRESH_BINARY)
+if uploaded_file is not None:
+
+    # =========================
+    # LOAD & PREPROCESS
+    # =========================
+    img = np.array(
+        Image.open(uploaded_file).convert("L")
+    )
+
+    # --- MASKING AWAL (ROI KASAR) ---
+    # Menghilangkan background hitam & tulang terlalu terang
+    mask_init = cv2.inRange(img, 100, 255)
+    img_target = cv2.bitwise_and(img, img, mask=mask_init)
+
+    # =========================
+    # THRESHOLDING
+    # =========================
+    if metode == "Manual":
+        _, binary = cv2.threshold(
+            img_target, thresh_val, 255, cv2.THRESH_BINARY
+        )
+    else:
+        pixels = img_target[img_target > 0]
+        if len(pixels) > 0:
+            otsu_val, _ = cv2.threshold(
+                pixels, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+            _, binary = cv2.threshold(
+                img_target, otsu_val, 255, cv2.THRESH_BINARY
+            )
         else:
-            pixels_tumor = img_target_tumor[img_target_tumor > 0]
-            if len(pixels_tumor) > 0:
-                val_otsu, _ = cv2.threshold(pixels_tumor, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                _, binary_res = cv2.threshold(img_target_tumor, val_otsu, 255, cv2.THRESH_BINARY)
-            else:
-                binary_res = np.zeros_like(img_target_tumor)
+            binary = np.zeros_like(img_target)
 
-        # Logika Morfologi
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        if operasi_morf == 'Opening': final = cv2.morphologyEx(binary_res, cv2.MORPH_OPEN, kernel)
-        elif operasi_morf == 'Closing': final = cv2.morphologyEx(binary_res, cv2.MORPH_CLOSE, kernel)
-        elif operasi_morf == 'Erosi': final = cv2.erode(binary_res, kernel)
-        elif operasi_morf == 'Dilasi': final = cv2.dilate(binary_res, kernel)
-        else: final = binary_res
+    # =========================
+    # MORFOLOGI
+    # =========================
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
 
-        # VISUALISASI GAMBAR
-        st.subheader("🖼️ Hasil Analisis Citra")
-        fig, ax = plt.subplots(1, 3, figsize=(22, 7))
-        ax[0].imshow(img, cmap='gray'); ax[0].set_title("1. Original"); ax[0].axis('off')
-        ax[1].imshow(img_target_tumor, cmap='inferno'); ax[1].set_title("2. Isolasi Area (Inferno)"); ax[1].axis('off')
-        ax[2].imshow(final, cmap='gray'); ax[2].set_title(f"3. Hasil Biner ({metode})"); ax[2].axis('off')
-        st.pyplot(fig)
+    if operasi_morf == "Opening":
+        morph = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+    elif operasi_morf == "Closing":
+        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    elif operasi_morf == "Erosi":
+        morph = cv2.erode(binary, kernel)
+    elif operasi_morf == "Dilasi":
+        morph = cv2.dilate(binary, kernel)
+    else:
+        morph = binary.copy()
 
-        # --- SEKSI HISTOGRAM (KETERANGAN DI BAWAH) ---
+    # =========================
+    # MASKING LANJUTAN (KUNCI ILMIAH)
+    # =========================
+    contours, _ = cv2.findContours(
+        morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    tumor_mask = np.zeros_like(morph)
+
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        cv2.drawContours(
+            tumor_mask, [largest], -1, 255, thickness=-1
+        )
+    else:
+        tumor_mask = morph.copy()
+
+    tumor_only = cv2.bitwise_and(img, img, mask=tumor_mask)
+
+    # =========================
+    # VISUALISASI UTAMA
+    # =========================
+    st.subheader("🖼️ Hasil Pemrosesan Citra")
+
+    fig, ax = plt.subplots(1, 3, figsize=(22, 7))
+
+    ax[0].imshow(img, cmap="gray")
+    ax[0].set_title("1. Citra Asli")
+    ax[0].axis("off")
+
+    ax[1].imshow(img_target, cmap="inferno")
+    ax[1].set_title("2. ROI Awal (Mask Intensitas)")
+    ax[1].axis("off")
+
+    ax[2].imshow(tumor_only, cmap="gray")
+    ax[2].set_title("3. Tumor Candidate (Final Mask)")
+    ax[2].axis("off")
+
+    st.pyplot(fig)
+
+    # =========================
+    # HISTOGRAM
+    # =========================
+    if show_hist:
         st.markdown("---")
-        st.subheader("📊 Histogram Citra")
-        
+        st.subheader("📊 Analisis Histogram")
+
         fig_h, ax_h = plt.subplots(1, 2, figsize=(15, 5))
-        ax_h[0].hist(img.ravel(), 256, [0, 256], color='gray', alpha=0.7); ax_h[0].set_title("Histogram Seluruh Citra")
-        
-        pixels_iso = img_target_tumor[img_target_tumor > 0].ravel()
-        if len(pixels_iso) > 0:
-            ax_h[1].hist(pixels_iso, 256, [1, 256], color='orange', alpha=0.8); ax_h[1].set_title("Histogram Distribusi Massa Tumor")
+
+        ax_h[0].hist(
+            img.ravel(), bins=256, range=(0, 256),
+            color="gray"
+        )
+        ax_h[0].set_title("Histogram Citra Asli")
+
+        pixels_tumor = tumor_only[tumor_only > 0].ravel()
+        if len(pixels_tumor) > 0:
+            ax_h[1].hist(
+                pixels_tumor, bins=256, range=(1, 256),
+                color="orange"
+            )
+            ax_h[1].set_title("Histogram Area Tumor")
+
         st.pyplot(fig_h)
 
-        # KETERANGAN DI BAWAH HISTOGRAM
         st.markdown("""
-        **💡 Interpretasi Hasil Histogram:**
-        1. **Sumbu X (Intensitas Piksel)**: Mewakili tingkat kecerahan dari 0 (Hitam pekat) hingga 255 (Putih terang).
-        2. **Sumbu Y (Jumlah Piksel)**: Mewakili seberapa banyak piksel yang memiliki nilai kecerahan tersebut.
-        3. **Analisis Kurva**: 
-           * **Histogram Asli** menunjukkan sebaran global dari background dan jaringan otak. 
-           * **Histogram Tumor (Jingga)** berfokus pada area yang diisolasi. Jika grafik menumpuk di area angka tinggi (kanan), hal ini secara ilmiah membuktikan bahwa massa tumor memiliki karakteristik **hyperintens** (lebih terang) dibandingkan jaringan sekitarnya pada citra MRI ini.
+        **Interpretasi Histogram:**
+        - Histogram kiri menunjukkan distribusi intensitas seluruh citra.
+        - Histogram kanan hanya merepresentasikan area hasil segmentasi.
+        - Pergeseran distribusi ke intensitas tinggi menunjukkan karakteristik
+          **hyperintens** yang umum pada massa tumor di citra MRI.
         """)
-        
-        st.success(f"Estimasi Luas Massa Tumor: {np.sum(final == 255)} Piksel")
 
-with tab2:
-    st.header("📘 Informasi Metode Lengkap")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("🔹 Metode Segmentasi")
-        st.write("**Manual Thresholding**: Pemisahan objek menggunakan nilai ambang batas statis (User-defined).")
-        st.write("**Otsu's Method**: Algoritma otomatis yang membagi piksel menjadi dua kelas (foreground & background) dengan mencari nilai threshold yang meminimalkan varians di dalam kelas.")
-    with col_b:
-        st.subheader("🔸 Operasi Morfologi")
-        st.write("**Erosi/Opening**: Digunakan untuk membuang noise kecil (bintik putih) agar fokus hanya pada massa utama.")
-        st.write("**Dilasi/Closing**: Digunakan untuk menutup lubang kecil (hole filling) agar area tumor terdeteksi secara utuh tanpa celah.")
+    # =========================
+    # INFO KUANTITATIF
+    # =========================
+    area = np.sum(tumor_mask == 255)
+    st.success(f"Estimasi Luas Area Tumor: **{area} piksel**")
+
+else:
+    st.info("Silakan upload citra medis untuk memulai analisis.")
